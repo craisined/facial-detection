@@ -1,9 +1,12 @@
 import numpy as np
+import random
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torchvision.transforms as T
 from sklearn.datasets import fetch_lfw_pairs
 from torch.utils.data import Dataset, DataLoader
+from torchvision.datasets import ImageFolder
 
 
 class LFWPairsDataset(Dataset):
@@ -24,6 +27,38 @@ class LFWPairsDataset(Dataset):
         img2 = torch.tensor(self.pairs[idx, 1])
         label = torch.tensor(1 if self.targets[idx] == 1 else -1, dtype=torch.float32)
         return img1, img2, label
+
+
+class PairedImageFolderDataset(Dataset):
+    def __init__(self, subset, size=112, root_dir="./data"):
+        self.base_dataset = ImageFolder(root=root_dir)
+        self.get_indices = {}
+        for idx, (path, label) in enumerate(self.base_dataset.samples):
+            if label not in self.get_indices:
+                self.get_indices[label] = []
+            self.get_indices[label].append(idx)
+        self.labels = list(self.get_indices.keys())
+        self.transform = T.Compose([
+            T.Resize((size, size)),
+            T.RandomHorizontalFlip(p=0.5),
+            T.ToTensor(),
+            T.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+        ])
+
+    def __len__(self):
+        return len(self.base_dataset)
+
+    def __getitem__(self, idx):
+        img1_path, img1_label = self.base_dataset.samples[idx]
+        similar = random.choice((True, False))
+        disimilar_labels = self.labels.copy()
+        disimilar_labels.remove(img1_label)
+        img2_label = img1_label if similar else random.choice(disimilar_labels)
+        img2_path = random.choice(self.get_indices[img2_label])
+        img1, img2 = self.base_dataset.loader(img1_path), self.base_dataset.loader(
+            img2_path
+        )
+        return self.transform(img1), self.transform(img2), (1 if similar else -1)
 
 
 class ResBlock(nn.Module):
@@ -133,7 +168,7 @@ if __name__ == "__main__":
     decay_params = [p for p in model.parameters() if p.ndim > 1]
     optimizer = torch.optim.AdamW(
         [
-            {"params": decay_params, "weight_decay": 1e-4},
+            {"params": decay_params, "weight_decay": 1e-2},
             {"params": no_decay_params, "weight_decay": 0.0},
         ],
         lr=3e-4,
