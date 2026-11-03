@@ -66,7 +66,7 @@ class FacialRecognitionModel(nn.Module):
             nn.BatchNorm1d(256),
             nn.ReLU(),
             nn.Dropout(p=0.4),
-            nn.Linear(256, 64, bias=False),
+            nn.Linear(256, 128, bias=False),
         )
 
     def forward(self, face_tensor):
@@ -116,7 +116,9 @@ def validate(model, data, device="cuda"):
             embeddings = model(face_1), model(face_2)
             loss = loss_func(embeddings[0], embeddings[1], target)
             similarity = torch.sum(embeddings[0] * embeddings[1], dim=1)
-            correct_predictions += torch.sum(torch.where(similarity > 0, 1.0, -1.0) == target).item()
+            correct_predictions += torch.sum(
+                torch.where(similarity > 0, 1.0, -1.0) == target
+            ).item()
             accum_loss += loss.item()
     return accum_loss / len(data), correct_predictions / len(data.dataset)
 
@@ -136,11 +138,13 @@ if __name__ == "__main__":
         ],
         lr=3e-4,
     )
-    train_set, test_set = load_data("train", batch_size=256, size=96), load_data(
-        "test", batch_size=256, size=96
+    train_set, test_set = load_data("train", batch_size=256, size=64), load_data(
+        "test", batch_size=256, size=64
     )
     for epoch in range(epochs):
         train_loss = train_epoch(model, train_set, optimizer)
         val_loss, val_acc = validate(model, test_set)
-        print(f"Epoch {epoch + 1}: {val_loss} (val) | {train_loss} (train) | {val_acc} (val acc)")
+        print(
+            f"Epoch {epoch + 1}: {val_loss} (val) | {train_loss} (train) | {val_acc} (val acc)"
+        )
         torch.save(model.state_dict(), f"epoch_{epoch + 1}.pth")
