@@ -115,7 +115,7 @@ def load_data(split, batch_size=32, size=224):
         dataset=dataset,
         batch_size=batch_size,
         shuffle=(split == "train"),
-        num_workers=4,
+        num_workers=2,
         pin_memory=True,
     )
     return dataloader
