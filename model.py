@@ -110,7 +110,7 @@ class FacialRecognitionModel(nn.Module):
 
 
 def load_data(split, batch_size=32, size=224):
-    dataset = LFWPairsDataset(subset=split, size=size)
+    dataset = PairedImageFolderDataset(subset=split, size=size)
     dataloader = DataLoader(
         dataset=dataset,
         batch_size=batch_size,
