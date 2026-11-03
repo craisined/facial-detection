@@ -62,8 +62,11 @@ class FacialRecognitionModel(nn.Module):
             ResBlock(512, 512),
             nn.AdaptiveAvgPool2d(1),
             nn.Flatten(),
-            nn.Dropout(p=0.3),
-            nn.Linear(512, 64, bias=False),
+            nn.Linear(512, 256, bias=False),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.Dropout(p=0.4),
+            nn.Linear(256, 64, bias=False),
         )
 
     def forward(self, face_tensor):
