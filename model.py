@@ -69,9 +69,8 @@ class FacialRecognitionModel(nn.Module):
         return self.resnet(face_tensor)
 
 
-# TODO: switch to scikit-learn's lfw
-def load_data(split, batch_size=32):
-    dataset = LFWPairsDataset(subset=split)
+def load_data(split, batch_size=32, size=224):
+    dataset = LFWPairsDataset(subset=split, size=size)
     dataloader = DataLoader(
         dataset=dataset,
         batch_size=batch_size,
@@ -103,7 +102,11 @@ def validate(model, data, device="cuda"):
     loss_func = nn.CosineEmbeddingLoss()
     with torch.no_grad():
         for batch_idx, (face_1, face_2, target) in enumerate(data):
-            face_1, face_2, target = face_1.to(device), face_2.to(device), target.to(device)
+            face_1, face_2, target = (
+                face_1.to(device),
+                face_2.to(device),
+                target.to(device),
+            )
             embeddings = model(face_1), model(face_2)
             loss = loss_func(embeddings[0], embeddings[1], target)
             accum_loss += loss.item()
@@ -111,11 +114,23 @@ def validate(model, data, device="cuda"):
 
 
 if __name__ == "__main__":
-    epochs = 10
+    epochs = 25
     model = FacialRecognitionModel()
     model.to("cuda")
-    optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
-    train_set, test_set = load_data("train"), load_data("test")
+    no_decay_params = [
+        p for p in model.parameters() if p.ndim == 1
+    ]  # For avoiding weight decay on bias and batch norm parameters
+    decay_params = [p for p in model.parameters() if p.ndim > 1]
+    optimizer = torch.optim.AdamW(
+        [
+            {"params": decay_params, "weight_decay": 1e-2},
+            {"params": no_decay_params, "weight_decay": 0.0},
+        ],
+        lr=1e-3,
+    )
+    train_set, test_set = load_data("train", batch_size=256, size=96), load_data(
+        "test", batch_size=256, size=96
+    )
     for epoch in range(epochs):
         train_loss = train_epoch(model, train_set, optimizer)
         val_loss = validate(model, test_set)
