@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.transforms as T
 from sklearn.datasets import fetch_lfw_pairs
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import random_split, Dataset, DataLoader
 from torchvision.datasets import ImageFolder
 
 
@@ -30,8 +30,12 @@ class LFWPairsDataset(Dataset):
 
 
 class PairedImageFolderDataset(Dataset):
-    def __init__(self, subset, size=112, root_dir="./data"):
-        self.base_dataset = ImageFolder(root=root_dir)
+    def __init__(self, subset, size=112, root_dir="./data", seed=2718):
+        base = ImageFolder(root=root_dir)
+        generator = torch.Generator().manual_seed(seed)
+        train_size = int(len(base) * 0.8)
+        train, test = random_split(self.base_dataset, [train_size, len(base) - train_size])
+        self.base_dataset = train if subset == "train" else test
         self.get_indices = {}
         for idx, (path, label) in enumerate(self.base_dataset.samples):
             if label not in self.get_indices:
@@ -54,7 +58,7 @@ class PairedImageFolderDataset(Dataset):
         disimilar_labels = self.labels.copy()
         disimilar_labels.remove(img1_label)
         img2_label = img1_label if similar else random.choice(disimilar_labels)
-        img2_path = random.choice(self.get_indices[img2_label])
+        img2_path = self.base_dataset.samples[random.choice(self.get_indices[img2_label])][0]
         img1, img2 = self.base_dataset.loader(img1_path), self.base_dataset.loader(
             img2_path
         )
@@ -125,12 +129,15 @@ def train_epoch(model, data, optimizer, device="cuda"):
     model.train()
     loss_func = nn.CosineEmbeddingLoss()
     accum_loss = 0
+    logging_rate = 1e4
     for batch_idx, (face_1, face_2, target) in enumerate(data):
         face_1, face_2, target = face_1.to(device), face_2.to(device), target.to(device)
         optimizer.zero_grad()
         embeddings = model(face_1), model(face_2)
         loss = loss_func(embeddings[0], embeddings[1], target)
         accum_loss += loss.item()
+        if batch_idx % logging_rate == logging_rate - 1:
+            print(f"Current avg: {accum_loss / batch_idx}")
         loss.backward()
         optimizer.step()
     return accum_loss / len(data)
@@ -173,9 +180,10 @@ if __name__ == "__main__":
         ],
         lr=3e-4,
     )
-    train_set, test_set = load_data("train", batch_size=256, size=64), load_data(
-        "test", batch_size=256, size=64
+    train_set, test_set = load_data("train", batch_size=256), load_data(
+        "test", batch_size=256
     )
+    print("Data loaded!")
     for epoch in range(epochs):
         train_loss = train_epoch(model, train_set, optimizer)
         val_loss, val_acc = validate(model, test_set)
