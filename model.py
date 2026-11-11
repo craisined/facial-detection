@@ -9,6 +9,7 @@ from sklearn.datasets import fetch_lfw_pairs
 from torch.utils.data import random_split, Dataset, DataLoader
 from torchvision.datasets import ImageFolder
 
+scaler = torch.amp.GradScaler("cuda")
 
 class LFWPairsDataset(Dataset):
     def __init__(self, subset, size=224):
@@ -131,11 +132,13 @@ def train_epoch(model, data, optimizer, device="cuda"):
     for batch_idx, (face_1, face_2, target) in pbar:
         face_1, face_2, target = face_1.to(device), face_2.to(device), target.to(device)
         optimizer.zero_grad()
-        embeddings = model(face_1), model(face_2)
+        with torch.amp.autocast("cuda", dtype=torch.float16):
+            embeddings = model(face_1), model(face_2)
         loss = loss_func(embeddings[0], embeddings[1], target)
         accum_loss += loss.item()
-        loss.backward()
-        optimizer.step()
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
         pbar.set_postfix(loss=f"{accum_loss / (batch_idx + 1):.4f}")
     return accum_loss / len(data)
 
@@ -153,7 +156,8 @@ def validate(model, data, device="cuda"):
                 face_2.to(device),
                 target.to(device),
             )
-            embeddings = model(face_1), model(face_2)
+            with torch.amp.autocast("cuda", dtype=torch.float16):
+                embeddings = model(face_1), model(face_2)
             loss = loss_func(embeddings[0], embeddings[1], target)
             similarity = torch.sum(embeddings[0] * embeddings[1], dim=1)
             correct_predictions += torch.sum(
@@ -179,8 +183,8 @@ if __name__ == "__main__":
         ],
         lr=3e-4,
     )
-    train_set, test_set = load_data("train", batch_size=32), load_data(
-        "test", batch_size=32
+    train_set, test_set = load_data("train", batch_size=64), load_data(
+        "test", batch_size=64
     )
     for epoch in range(epochs):
         train_loss = train_epoch(model, train_set, optimizer)
