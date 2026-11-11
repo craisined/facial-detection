@@ -162,7 +162,7 @@ def load_lfw_data(batch_size=256, size=112):
 
 def train_epoch(model, data, optimizer, device="cuda"):
     model.train()
-    loss_func = nn.CosineEmbeddingLoss()
+    loss_func = nn.CosineEmbeddingLoss(margin=0.3)
     accum_loss = 0
     pbar = tqdm(enumerate(data), unit="batches", total=len(data), desc="Training: ")
     for batch_idx, (face_1, face_2, target) in pbar:
@@ -182,7 +182,7 @@ def train_epoch(model, data, optimizer, device="cuda"):
 def validate(model, data, device="cuda"):
     model.eval()
     accum_loss = 0
-    loss_func = nn.CosineEmbeddingLoss()
+    loss_func = nn.CosineEmbeddingLoss(margin=0.3)
     correct_predictions = 0
     all_sims, all_targets = [], []
     with torch.no_grad():
@@ -221,7 +221,7 @@ def validate(model, data, device="cuda"):
 
     return (
         accum_loss / len(data),
-        correct_predictions / len(data.dataset),
+        best_acc,
         best_threshold,
     )
 
