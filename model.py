@@ -38,7 +38,7 @@ class PairedImageFolderDataset(Dataset):
         train, test = random_split(base, [train_size, len(base) - train_size], generator=generator)
         self.base_dataset = train if subset == "train" else test
         self.get_img = {}
-        for idx, (img, label) in tqdm(enumerate(self.base_dataset)):
+        for idx, (img, label) in tqdm(enumerate(self.base_dataset), desc="Loading images", unit="images", total=len(self.base_dataset)):
             if label not in self.get_img:
                 self.get_img[label] = []
             self.get_img[label].append(img)
@@ -117,7 +117,7 @@ def load_data(split, batch_size=32, size=112):
         dataset=dataset,
         batch_size=batch_size,
         shuffle=(split == "train"),
-        num_workers=0,
+        num_workers=0, # Set to prevent Pytorch from pickling entire dataset
         pin_memory=True,
     )
     return dataloader
@@ -127,7 +127,8 @@ def train_epoch(model, data, optimizer, device="cuda"):
     model.train()
     loss_func = nn.CosineEmbeddingLoss()
     accum_loss = 0
-    for batch_idx, (face_1, face_2, target) in tqdm(enumerate(data)):
+    pbar = tqdm(enumerate(data), unit="batches", total=len(data), desc="Training: ")
+    for batch_idx, (face_1, face_2, target) in pbar:
         face_1, face_2, target = face_1.to(device), face_2.to(device), target.to(device)
         optimizer.zero_grad()
         embeddings = model(face_1), model(face_2)
@@ -135,6 +136,7 @@ def train_epoch(model, data, optimizer, device="cuda"):
         accum_loss += loss.item()
         loss.backward()
         optimizer.step()
+        pbar.set_postfix(loss=f"{accum_loss / (batch_idx + 1):.4f}")
     return accum_loss / len(data)
 
 
@@ -144,7 +146,8 @@ def validate(model, data, device="cuda"):
     loss_func = nn.CosineEmbeddingLoss()
     correct_predictions = 0
     with torch.no_grad():
-        for batch_idx, (face_1, face_2, target) in tqdm(enumerate(data)):
+        pbar = tqdm(enumerate(data), unit="batches", total=len(data), desc="Validating: ")
+        for batch_idx, (face_1, face_2, target) in pbar:
             face_1, face_2, target = (
                 face_1.to(device),
                 face_2.to(device),
@@ -157,6 +160,7 @@ def validate(model, data, device="cuda"):
                 torch.where(similarity > 0, 1.0, -1.0) == target
             ).item()
             accum_loss += loss.item()
+            pbar.set_postfix(loss=f"{accum_loss / (batch_idx + 1):.4f}")
     return accum_loss / len(data), correct_predictions / len(data.dataset)
 
 
@@ -178,11 +182,10 @@ if __name__ == "__main__":
     train_set, test_set = load_data("train", batch_size=32), load_data(
         "test", batch_size=32
     )
-    print("Data loaded!")
     for epoch in range(epochs):
         train_loss = train_epoch(model, train_set, optimizer)
         val_loss, val_acc = validate(model, test_set)
         print(
-            f"Epoch {epoch + 1}: {val_loss} (val) | {train_loss} (train) | {val_acc} (val acc)"
+            f"Epoch {epoch + 1}: {val_loss:.4f} (val) | {train_loss:.4f} (train) | {val_acc:.4f} (val acc)"
         )
         torch.save(model.state_dict(), f"epoch_{epoch + 1}.pth")
