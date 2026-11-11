@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.transforms as T
+from tqdm import tqdm
 from sklearn.datasets import fetch_lfw_pairs
 from torch.utils.data import random_split, Dataset, DataLoader
 from torchvision.datasets import ImageFolder
@@ -34,14 +35,14 @@ class PairedImageFolderDataset(Dataset):
         base = ImageFolder(root=root_dir)
         generator = torch.Generator().manual_seed(seed)
         train_size = int(len(base) * 0.8)
-        train, test = random_split(self.base_dataset, [train_size, len(base) - train_size])
+        train, test = random_split(base, [train_size, len(base) - train_size], generator=generator)
         self.base_dataset = train if subset == "train" else test
-        self.get_indices = {}
-        for idx, (path, label) in enumerate(self.base_dataset.samples):
-            if label not in self.get_indices:
-                self.get_indices[label] = []
-            self.get_indices[label].append(idx)
-        self.labels = list(self.get_indices.keys())
+        self.get_img = {}
+        for idx, (img, label) in tqdm(enumerate(self.base_dataset)):
+            if label not in self.get_img:
+                self.get_img[label] = []
+            self.get_img[label].append(img)
+        self.labels = list(self.get_img.keys())
         self.transform = T.Compose([
             T.Resize((size, size)),
             T.RandomHorizontalFlip(p=0.5),
@@ -53,15 +54,12 @@ class PairedImageFolderDataset(Dataset):
         return len(self.base_dataset)
 
     def __getitem__(self, idx):
-        img1_path, img1_label = self.base_dataset.samples[idx]
+        img1, img1_label = self.base_dataset[idx]
         similar = random.choice((True, False))
         disimilar_labels = self.labels.copy()
         disimilar_labels.remove(img1_label)
         img2_label = img1_label if similar else random.choice(disimilar_labels)
-        img2_path = self.base_dataset.samples[random.choice(self.get_indices[img2_label])][0]
-        img1, img2 = self.base_dataset.loader(img1_path), self.base_dataset.loader(
-            img2_path
-        )
+        img2 = random.choice(self.get_img[img2_label])
         return self.transform(img1), self.transform(img2), (1 if similar else -1)
 
 
@@ -113,13 +111,13 @@ class FacialRecognitionModel(nn.Module):
         return F.normalize(unnormalized, p=2, dim=1)
 
 
-def load_data(split, batch_size=32, size=224):
+def load_data(split, batch_size=32, size=112):
     dataset = PairedImageFolderDataset(subset=split, size=size)
     dataloader = DataLoader(
         dataset=dataset,
         batch_size=batch_size,
         shuffle=(split == "train"),
-        num_workers=2,
+        num_workers=0,
         pin_memory=True,
     )
     return dataloader
@@ -129,15 +127,12 @@ def train_epoch(model, data, optimizer, device="cuda"):
     model.train()
     loss_func = nn.CosineEmbeddingLoss()
     accum_loss = 0
-    logging_rate = 1e4
-    for batch_idx, (face_1, face_2, target) in enumerate(data):
+    for batch_idx, (face_1, face_2, target) in tqdm(enumerate(data)):
         face_1, face_2, target = face_1.to(device), face_2.to(device), target.to(device)
         optimizer.zero_grad()
         embeddings = model(face_1), model(face_2)
         loss = loss_func(embeddings[0], embeddings[1], target)
         accum_loss += loss.item()
-        if batch_idx % logging_rate == logging_rate - 1:
-            print(f"Current avg: {accum_loss / batch_idx}")
         loss.backward()
         optimizer.step()
     return accum_loss / len(data)
@@ -149,7 +144,7 @@ def validate(model, data, device="cuda"):
     loss_func = nn.CosineEmbeddingLoss()
     correct_predictions = 0
     with torch.no_grad():
-        for batch_idx, (face_1, face_2, target) in enumerate(data):
+        for batch_idx, (face_1, face_2, target) in tqdm(enumerate(data)):
             face_1, face_2, target = (
                 face_1.to(device),
                 face_2.to(device),
@@ -166,7 +161,7 @@ def validate(model, data, device="cuda"):
 
 
 if __name__ == "__main__":
-    epochs = 25
+    epochs = 10
     model = FacialRecognitionModel()
     model.to("cuda")
     no_decay_params = [
@@ -180,8 +175,8 @@ if __name__ == "__main__":
         ],
         lr=3e-4,
     )
-    train_set, test_set = load_data("train", batch_size=256), load_data(
-        "test", batch_size=256
+    train_set, test_set = load_data("train", batch_size=32), load_data(
+        "test", batch_size=32
     )
     print("Data loaded!")
     for epoch in range(epochs):
