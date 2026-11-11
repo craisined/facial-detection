@@ -27,7 +27,7 @@ class LFWPairsDataset(Dataset):
         self.targets = data.target
 
         self.pairs = np.transpose(self.pairs, (0, 1, 4, 2, 3))
-        self.pairs = self.pairs.astype(np.float32) / 255.0
+        self.pairs = self.pairs.astype(np.float32)
         self.transform = T.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
 
     def __len__(self):
