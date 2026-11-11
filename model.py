@@ -184,6 +184,7 @@ def validate(model, data, device="cuda"):
     accum_loss = 0
     loss_func = nn.CosineEmbeddingLoss()
     correct_predictions = 0
+    all_sims, all_targets = [], []
     with torch.no_grad():
         pbar = tqdm(
             enumerate(data), unit="batches", total=len(data), desc="Validating: "
@@ -202,8 +203,27 @@ def validate(model, data, device="cuda"):
                 torch.where(similarity > 0, 1.0, -1.0) == target
             ).item()
             accum_loss += loss.item()
+            all_sims.append(torch.sum(emb1 * emb2, dim=1).cpu())
+            all_targets.append(target.cpu())
             pbar.set_postfix(loss=f"{accum_loss / (batch_idx + 1):.4f}")
-    return accum_loss / len(data), correct_predictions / len(data.dataset)
+
+    sims = torch.cat(all_sims)
+    targets = torch.cat(all_targets)
+    thresholds = torch.linspace(-1, 1, steps=100)
+    best_acc = 0
+    best_threshold = 0
+    for threshold in thresholds:
+        predictions = torch.where(sims > threshold, 1.0, -1.0)
+        acc = torch.sum(predictions == targets).item() / len(targets)
+        if acc > best_acc:
+            best_acc = acc
+            best_threshold = threshold.item()
+
+    return (
+        accum_loss / len(data),
+        correct_predictions / len(data.dataset),
+        best_threshold,
+    )
 
 
 if __name__ == "__main__":
@@ -224,12 +244,12 @@ if __name__ == "__main__":
     )
     train_set, test_set = load_data(), load_lfw_data()
     print("Data loaded!")
-    val_loss, val_acc = validate(model, test_set)
-    print(f"Epoch 0: {val_loss:.4f} (val) | 0.0000 (train) | {val_acc:.4f} (val acc)")
+    val_loss, val_acc, threshold = validate(model, test_set)
+    print(f"Epoch 0: {val_loss:.4f} (val) | 0.0000 (train) | {val_acc:.4f} (val acc) | {threshold:.4f} (threshold)")
     for epoch in range(epochs):
         train_loss = train_epoch(model, train_set, optimizer)
-        val_loss, val_acc = validate(model, test_set)
+        val_loss, val_acc, threshold = validate(model, test_set)
         print(
-            f"Epoch {epoch + 1}: {val_loss:.4f} (val) | {train_loss:.4f} (train) | {val_acc:.4f} (val acc)"
+            f"Epoch {epoch + 1}: {val_loss:.4f} (val) | {train_loss:.4f} (train) | {val_acc:.4f} (val acc) | {threshold:.4f} (threshold)"
         )
         torch.save(model._orig_mod.state_dict(), f"epoch_{epoch + 1}.pth")
