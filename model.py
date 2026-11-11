@@ -11,15 +11,22 @@ from torchvision.datasets import ImageFolder
 
 scaler = torch.amp.GradScaler("cuda")
 
+
 class LFWPairsDataset(Dataset):
-    def __init__(self, subset, size=224):
-        data = fetch_lfw_pairs(subset=subset, color=True, resize=size / 250)
+    def __init__(self, size=224):
+        data = fetch_lfw_pairs(
+            subset="10_folds",
+            color=True,
+            resize=size / 150,
+            slice_=(slice(55, 205), slice(50, 200)),
+        )
 
         self.pairs = data.pairs
         self.targets = data.target
 
         self.pairs = np.transpose(self.pairs, (0, 1, 4, 2, 3))
         self.pairs = self.pairs.astype(np.float32) / 255.0
+        self.transform = T.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
 
     def __len__(self):
         return len(self.targets)
@@ -27,40 +34,45 @@ class LFWPairsDataset(Dataset):
     def __getitem__(self, idx):
         img1 = torch.tensor(self.pairs[idx, 0])
         img2 = torch.tensor(self.pairs[idx, 1])
-        label = torch.tensor(1 if self.targets[idx] == 1 else -1, dtype=torch.float32)
-        return img1, img2, label
+        label = 1 if self.targets[idx] == 1 else -1
+        return self.transform(img1), self.transform(img2), label
 
 
 class PairedImageFolderDataset(Dataset):
-    def __init__(self, subset, size=112, root_dir="./data", seed=2718):
-        base = ImageFolder(root=root_dir)
-        generator = torch.Generator().manual_seed(seed)
-        train_size = int(len(base) * 0.8)
-        train, test = random_split(base, [train_size, len(base) - train_size], generator=generator)
-        self.base_dataset = train if subset == "train" else test
-        self.get_img = {}
-        for idx, (img, label) in tqdm(enumerate(self.base_dataset), desc="Loading images", unit="images", total=len(self.base_dataset)):
-            if label not in self.get_img:
-                self.get_img[label] = []
-            self.get_img[label].append(img)
-        self.labels = list(self.get_img.keys())
-        self.transform = T.Compose([
-            T.Resize((size, size)),
-            T.RandomHorizontalFlip(p=0.5),
-            T.ToTensor(),
-            T.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
-        ])
+    def __init__(self, size=112, root_dir="./data"):
+        self.base_dataset = ImageFolder(root=root_dir)
+        self.get_path = {}
+        for idx, (path, label) in tqdm(
+            enumerate(self.base_dataset.samples),
+            desc="Building labels dict",
+            unit="images",
+            total=len(self.base_dataset),
+        ):
+            if label not in self.get_path:
+                self.get_path[label] = []
+            self.get_path[label].append(path)
+        self.labels = list(self.get_path.keys())
+        self.transform = T.Compose(
+            [
+                T.Resize((size, size)),
+                T.RandomHorizontalFlip(p=0.5),
+                T.ToTensor(),
+                T.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+            ]
+        )
 
     def __len__(self):
         return len(self.base_dataset)
 
     def __getitem__(self, idx):
-        img1, img1_label = self.base_dataset[idx]
+        img1_path, img1_label = self.base_dataset.samples[idx]
+        img1 = self.base_dataset.loader(img1_path)
         similar = random.choice((True, False))
-        disimilar_labels = self.labels.copy()
-        disimilar_labels.remove(img1_label)
-        img2_label = img1_label if similar else random.choice(disimilar_labels)
-        img2 = random.choice(self.get_img[img2_label])
+        img2_label = img1_label
+        while not similar and img2_label == img1_label:
+            img2_label = random.choice(self.labels)
+        img2_path = random.choice(self.get_path[img2_label])
+        img2 = self.base_dataset.loader(img2_path)
         return self.transform(img1), self.transform(img2), (1 if similar else -1)
 
 
@@ -112,14 +124,29 @@ class FacialRecognitionModel(nn.Module):
         return F.normalize(unnormalized, p=2, dim=1)
 
 
-def load_data(split, batch_size=32, size=112):
-    dataset = PairedImageFolderDataset(subset=split, size=size)
+def load_data(batch_size=64, size=112):
+    dataset = PairedImageFolderDataset(size=size)
     dataloader = DataLoader(
         dataset=dataset,
         batch_size=batch_size,
-        shuffle=(split == "train"),
-        num_workers=0, # Set to prevent Pytorch from pickling entire dataset
+        shuffle=True,
+        num_workers=4,
         pin_memory=True,
+        persistent_workers=True,
+    )
+    return dataloader
+
+
+def load_lfw_data(batch_size=64, size=112):
+    dataset = LFWPairsDataset(size=size)
+    print(dataset[0][0].shape, dataset[0][1].shape, dataset[0][2])
+    dataloader = DataLoader(
+        dataset=dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=4,
+        pin_memory=True,
+        persistent_workers=True,
     )
     return dataloader
 
@@ -133,8 +160,8 @@ def train_epoch(model, data, optimizer, device="cuda"):
         face_1, face_2, target = face_1.to(device), face_2.to(device), target.to(device)
         optimizer.zero_grad()
         with torch.amp.autocast("cuda", dtype=torch.float16):
-            embeddings = model(face_1), model(face_2)
-        loss = loss_func(embeddings[0], embeddings[1], target)
+            emb1, emb2 = model(torch.cat([face_1, face_2])).chunk(2)
+        loss = loss_func(emb1, emb2, target)
         accum_loss += loss.item()
         scaler.scale(loss).backward()
         scaler.step(optimizer)
@@ -149,7 +176,9 @@ def validate(model, data, device="cuda"):
     loss_func = nn.CosineEmbeddingLoss()
     correct_predictions = 0
     with torch.no_grad():
-        pbar = tqdm(enumerate(data), unit="batches", total=len(data), desc="Validating: ")
+        pbar = tqdm(
+            enumerate(data), unit="batches", total=len(data), desc="Validating: "
+        )
         for batch_idx, (face_1, face_2, target) in pbar:
             face_1, face_2, target = (
                 face_1.to(device),
@@ -157,9 +186,9 @@ def validate(model, data, device="cuda"):
                 target.to(device),
             )
             with torch.amp.autocast("cuda", dtype=torch.float16):
-                embeddings = model(face_1), model(face_2)
-            loss = loss_func(embeddings[0], embeddings[1], target)
-            similarity = torch.sum(embeddings[0] * embeddings[1], dim=1)
+                emb1, emb2 = model(torch.cat([face_1, face_2])).chunk(2)
+            loss = loss_func(emb1, emb2, target)
+            similarity = torch.sum(emb1 * emb2, dim=1)
             correct_predictions += torch.sum(
                 torch.where(similarity > 0, 1.0, -1.0) == target
             ).item()
@@ -183,9 +212,8 @@ if __name__ == "__main__":
         ],
         lr=3e-4,
     )
-    train_set, test_set = load_data("train", batch_size=64), load_data(
-        "test", batch_size=64
-    )
+    train_set, test_set = load_data(), load_lfw_data()
+    print("Data loaded!")
     for epoch in range(epochs):
         train_loss = train_epoch(model, train_set, optimizer)
         val_loss, val_acc = validate(model, test_set)
