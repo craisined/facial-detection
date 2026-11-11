@@ -3,6 +3,7 @@ import random
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch._inductor.config as inductor_config
 import torchvision.transforms as T
 from tqdm import tqdm
 from sklearn.datasets import fetch_lfw_pairs
@@ -10,6 +11,7 @@ from torch.utils.data import random_split, Dataset, DataLoader
 from torchvision.datasets import ImageFolder
 
 scaler = torch.amp.GradScaler("cuda")
+inductor_config.max_autotune_gemm = False
 
 
 class LFWPairsDataset(Dataset):
@@ -137,7 +139,7 @@ def load_data(batch_size=256, size=112):
         dataset=dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=4,
+        num_workers=8,
         pin_memory=True,
         persistent_workers=True,
     )
@@ -150,7 +152,7 @@ def load_lfw_data(batch_size=256, size=112):
         dataset=dataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=4,
+        num_workers=8,
         pin_memory=True,
         persistent_workers=True,
     )
@@ -227,4 +229,4 @@ if __name__ == "__main__":
         print(
             f"Epoch {epoch + 1}: {val_loss:.4f} (val) | {train_loss:.4f} (train) | {val_acc:.4f} (val acc)"
         )
-        torch.save(model.state_dict(), f"epoch_{epoch + 1}.pth")
+        torch.save(model._orig_mod.state_dict(), f"epoch_{epoch + 1}.pth")
