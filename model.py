@@ -1,3 +1,4 @@
+import logging
 import numpy as np
 import random
 import torch
@@ -11,7 +12,7 @@ from torch.utils.data import random_split, Dataset, DataLoader
 from torchvision.datasets import ImageFolder
 
 scaler = torch.amp.GradScaler("cuda")
-inductor_config.max_autotune_gemm = False
+logging.getLogger("torch._inductor").setLevel(logging.ERROR)
 
 
 class LFWPairsDataset(Dataset):
@@ -223,6 +224,8 @@ if __name__ == "__main__":
     )
     train_set, test_set = load_data(), load_lfw_data()
     print("Data loaded!")
+    val_loss, val_acc = validate(model, test_set)
+    print(f"Epoch 0: {val_loss:.4f} (val) | 0.0000 (train) | {val_acc:.4f} (val acc)")
     for epoch in range(epochs):
         train_loss = train_epoch(model, train_set, optimizer)
         val_loss, val_acc = validate(model, test_set)
