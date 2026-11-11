@@ -86,7 +86,11 @@ class ResBlock(nn.Module):
             nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(out_channels),
         )
-        self.shortcut = nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False)
+        self.shortcut = (
+            nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False)
+            if in_channels != out_channels
+            else nn.Identity()
+        )
         self.relu = nn.ReLU()
 
     def forward(self, x):
@@ -99,7 +103,10 @@ class FacialRecognitionModel(nn.Module):
     def __init__(self):
         super().__init__()
         self.resnet = nn.Sequential(
-            ResBlock(3, 64),
+            nn.Conv2d(3, 64, kernel_size=3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            ResBlock(64, 64),
             ResBlock(64, 64),
             nn.MaxPool2d(2),
             ResBlock(64, 128),
@@ -124,7 +131,7 @@ class FacialRecognitionModel(nn.Module):
         return F.normalize(unnormalized, p=2, dim=1)
 
 
-def load_data(batch_size=64, size=112):
+def load_data(batch_size=256, size=112):
     dataset = PairedImageFolderDataset(size=size)
     dataloader = DataLoader(
         dataset=dataset,
@@ -137,9 +144,8 @@ def load_data(batch_size=64, size=112):
     return dataloader
 
 
-def load_lfw_data(batch_size=64, size=112):
+def load_lfw_data(batch_size=256, size=112):
     dataset = LFWPairsDataset(size=size)
-    print(dataset[0][0].shape, dataset[0][1].shape, dataset[0][2])
     dataloader = DataLoader(
         dataset=dataset,
         batch_size=batch_size,
@@ -200,7 +206,8 @@ def validate(model, data, device="cuda"):
 if __name__ == "__main__":
     epochs = 10
     model = FacialRecognitionModel()
-    model.to("cuda")
+    model = model.to("cuda")
+    model = torch.compile(model)
     no_decay_params = [
         p for p in model.parameters() if p.ndim == 1
     ]  # For avoiding weight decay on bias and batch norm parameters
