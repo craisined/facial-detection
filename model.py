@@ -19,9 +19,10 @@ class LFWPairsDataset(Dataset):
     def __init__(self, size=224):
         data = fetch_lfw_pairs(
             subset="10_folds",
+            funneled=True,
             color=True,
-            resize=size / 120,
-            slice_=(slice(75, 195), slice(65, 185)),
+            resize=size / 130,
+            slice_=(slice(65, 195), slice(60, 190)),
         )
 
         self.pairs = data.pairs
