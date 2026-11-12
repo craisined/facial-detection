@@ -186,7 +186,6 @@ def validate(model, data, device="cuda"):
     model.eval()
     accum_loss = 0
     loss_func = nn.CosineEmbeddingLoss(margin=0.3)
-    correct_predictions = 0
     all_sims, all_targets = [], []
     with torch.no_grad():
         pbar = tqdm(
@@ -204,9 +203,6 @@ def validate(model, data, device="cuda"):
                 emb1, emb2 = model(torch.cat([face_1, face_2])).chunk(2)
             loss = loss_func(emb1, emb2, target)
             similarity = torch.sum(emb1 * emb2, dim=1)
-            correct_predictions += torch.sum(
-                torch.where(similarity > 0, 1.0, -1.0) == target
-            ).item()
             accum_loss += loss.item()
             all_sims.append(torch.sum(emb1 * emb2, dim=1).cpu())
             all_targets.append(target.cpu())
