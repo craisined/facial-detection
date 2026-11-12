@@ -228,8 +228,12 @@ def validate(model, data, device="cuda"):
 
 
 if __name__ == "__main__":
-    epochs = 10
+    checkpoint = "checkpoint.pth"
+    start_epochs = 0
+    total_epochs = 20
     model = FacialRecognitionModel()
+    if checkpoint is not None:
+        model.load_state_dict(torch.load(checkpoint, weights_only=True))
     model = model.to("cuda", memory_format=torch.channels_last)
     model = torch.compile(model)
     no_decay_params = [
@@ -241,16 +245,24 @@ if __name__ == "__main__":
             {"params": decay_params, "weight_decay": 1e-2},
             {"params": no_decay_params, "weight_decay": 0.0},
         ],
-        lr=3e-4,
+        lr=1e-4,
     )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, 
+        T_max=total_epochs, 
+        eta_min=1e-6
+    )
+    for _ in range(start_epochs):
+        scheduler.step()
     train_set, test_set = load_data(), load_lfw_data()
     print("Data loaded!")
     val_loss, val_acc, threshold = validate(model, test_set)
     print(
         f"Epoch 0: {val_loss:.4f} (val) | 0.0000 (train) | {val_acc:.4f} (val acc) | {threshold:.4f} (threshold)"
     )
-    for epoch in range(epochs):
+    for epoch in range(start_epochs, total_epochs):
         train_loss = train_epoch(model, train_set, optimizer)
+        scheduler.step()
         val_loss, val_acc, threshold = validate(model, test_set)
         print(
             f"Epoch {epoch + 1}: {val_loss:.4f} (val) | {train_loss:.4f} (train) | {val_acc:.4f} (val acc) | {threshold:.4f} (threshold)"
