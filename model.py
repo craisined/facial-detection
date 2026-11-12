@@ -20,8 +20,8 @@ class LFWPairsDataset(Dataset):
         data = fetch_lfw_pairs(
             subset="10_folds",
             color=True,
-            resize=size / 150,
-            slice_=(slice(55, 205), slice(50, 200)),
+            resize=size / 120,
+            slice_=(slice(75, 195), slice(65, 185)),
         )
 
         self.pairs = data.pairs
@@ -166,7 +166,9 @@ def train_epoch(model, data, optimizer, device="cuda"):
     accum_loss = 0
     pbar = tqdm(enumerate(data), unit="batches", total=len(data), desc="Training: ")
     for batch_idx, (face_1, face_2, target) in pbar:
-        face_1, face_2, target = face_1.to(device), face_2.to(device), target.to(device)
+        face_1 = face_1.to(device, non_blocking=True, memory_format=torch.channels_last)
+        face_2 = face_2.to(device, non_blocking=True, memory_format=torch.channels_last)
+        target = target.to(device, non_blocking=True)
         optimizer.zero_grad()
         with torch.amp.autocast("cuda", dtype=torch.float16):
             emb1, emb2 = model(torch.cat([face_1, face_2])).chunk(2)
@@ -190,11 +192,13 @@ def validate(model, data, device="cuda"):
             enumerate(data), unit="batches", total=len(data), desc="Validating: "
         )
         for batch_idx, (face_1, face_2, target) in pbar:
-            face_1, face_2, target = (
-                face_1.to(device),
-                face_2.to(device),
-                target.to(device),
+            face_1 = face_1.to(
+                device, non_blocking=True, memory_format=torch.channels_last
             )
+            face_2 = face_2.to(
+                device, non_blocking=True, memory_format=torch.channels_last
+            )
+            target = target.to(device, non_blocking=True)
             with torch.amp.autocast("cuda", dtype=torch.float16):
                 emb1, emb2 = model(torch.cat([face_1, face_2])).chunk(2)
             loss = loss_func(emb1, emb2, target)
@@ -229,7 +233,7 @@ def validate(model, data, device="cuda"):
 if __name__ == "__main__":
     epochs = 10
     model = FacialRecognitionModel()
-    model = model.to("cuda")
+    model = model.to("cuda", memory_format=torch.channels_last)
     model = torch.compile(model)
     no_decay_params = [
         p for p in model.parameters() if p.ndim == 1
@@ -245,7 +249,9 @@ if __name__ == "__main__":
     train_set, test_set = load_data(), load_lfw_data()
     print("Data loaded!")
     val_loss, val_acc, threshold = validate(model, test_set)
-    print(f"Epoch 0: {val_loss:.4f} (val) | 0.0000 (train) | {val_acc:.4f} (val acc) | {threshold:.4f} (threshold)")
+    print(
+        f"Epoch 0: {val_loss:.4f} (val) | 0.0000 (train) | {val_acc:.4f} (val acc) | {threshold:.4f} (threshold)"
+    )
     for epoch in range(epochs):
         train_loss = train_epoch(model, train_set, optimizer)
         val_loss, val_acc, threshold = validate(model, test_set)
