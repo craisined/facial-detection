@@ -11,6 +11,7 @@ pip install scikit-learn torch torchvision tqdm
 
 ### Training
 ```sh
+sh setup.sh
 python3 model.py
 ```
 
