@@ -228,9 +228,9 @@ def validate(model, data, device="cuda"):
 
 
 if __name__ == "__main__":
-    checkpoint = "checkpoint.pth"
+    checkpoint = None
     start_epochs = 0
-    total_epochs = 20
+    total_epochs = 30
     model = FacialRecognitionModel()
     if checkpoint is not None:
         model.load_state_dict(torch.load(checkpoint, weights_only=True))
@@ -245,7 +245,7 @@ if __name__ == "__main__":
             {"params": decay_params, "weight_decay": 1e-2},
             {"params": no_decay_params, "weight_decay": 0.0},
         ],
-        lr=1e-4,
+        lr=3e-4,
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, 
