@@ -17,10 +17,11 @@ python3 model.py
 
 ### Inference
 ```python3
-from model import FacialRecognitionModel, predict
+from model import FacialRecognitionModel
+import torch
 model = FacialRecognitionModel()
-model.load_state_dict(torch.load(checkpoint, weights_only=True))
-model.predict(face1, face2) # face1, face2 are PIL images
+model.load_state_dict(torch.load("model.pth", weights_only=True))
+print(model.predict(face1, face2)) # face1, face2 are PIL images
 ```
 
 ## Tech

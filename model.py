@@ -79,32 +79,6 @@ class PairedImageFolderDataset(Dataset):
         img2 = self.base_dataset.loader(img2_path)
         return self.transform(img1), self.transform(img2), (1 if similar else -1)
 
-    def predict(self, face_1, face_2, threshold=0.6, device="cuda"):
-        self.eval()
-        transform = T.Compose(
-            [
-                T.Resize((112, 112)),
-                T.ToTensor(),
-                T.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
-            ]
-        )
-        face_1 = transform(face_1).unsqueeze(0)
-        face_2 = transform(face_2).unsqueeze(0)
-        with torch.no_grad():
-            face_1 = face_1.to(
-                device, non_blocking=True, memory_format=torch.channels_last
-            )
-            face_2 = face_2.to(
-                device, non_blocking=True, memory_format=torch.channels_last
-            )
-            with torch.amp.autocast("cuda", dtype=torch.float16):
-                emb1, emb2 = self(torch.cat([face_1, face_2])).chunk(2)
-            similarity = torch.sum(emb1 * emb2, dim=1)
-            prediction = bool(
-                torch.where(similarity > threshold, 1.0, 0.0).item()
-            )
-        return prediction
-
 
 class ResBlock(nn.Module):
     def __init__(self, in_channels, out_channels):
@@ -159,6 +133,31 @@ class FacialRecognitionModel(nn.Module):
     def forward(self, face_tensor):
         unnormalized = self.resnet(face_tensor)
         return F.normalize(unnormalized, p=2, dim=1)
+
+    def predict(self, face_1, face_2, threshold=0.6, device="cuda"):
+        model = self.to(device, non_blocking=True, memory_format=torch.channels_last)
+        model.eval()
+        transform = T.Compose(
+            [
+                T.Resize((112, 112)),
+                T.ToTensor(),
+                T.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+            ]
+        )
+        face_1 = transform(face_1).unsqueeze(0)
+        face_2 = transform(face_2).unsqueeze(0)
+        with torch.no_grad():
+            face_1 = face_1.to(
+                device, non_blocking=True, memory_format=torch.channels_last
+            )
+            face_2 = face_2.to(
+                device, non_blocking=True, memory_format=torch.channels_last
+            )
+            with torch.amp.autocast("cuda", dtype=torch.float16):
+                emb1, emb2 = model(torch.cat([face_1, face_2])).chunk(2)
+            similarity = torch.sum(emb1 * emb2, dim=1)
+            prediction = bool(torch.where(similarity > threshold, 1.0, 0.0).item())
+        return prediction
 
 
 def load_data(batch_size=256, size=112):
